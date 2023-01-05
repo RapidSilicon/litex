@@ -62,6 +62,15 @@ class NextPNRWrapper():
                 if value != "":
                     self._pnr_opts += f"--{key} {value} "
 
+    @property
+    def pnr_opts(self):
+        """return PNR configuration options
+        Returns
+        =======
+        str containing configuration options passed to nextpnr-xxx
+        """
+        return self._pnr_opts
+
     def get_call(self, target="script"):
         """built a script command or a Makefile rule + command
 
@@ -76,7 +85,7 @@ class NextPNRWrapper():
         """
         cmd = "{pnr_name} --{in_fmt} {build_name}.{in_fmt} --{constr_fmt}" + \
             " {build_name}.{constr_fmt}" + \
-            " --{out_fmt} {build_name}.{out_ext} {pnr_opts}\n"
+            " --{out_fmt} {build_name}.{out_ext} {pnr_opts}"
         base_cmd = cmd.format(
             pnr_name   = self.name,
             build_name = self._build_name,
@@ -87,7 +96,7 @@ class NextPNRWrapper():
             pnr_opts   = self._pnr_opts
         )
         if target == "makefile":
-            return f"{self._build_name}.{self._out_format}:\n\t" + base_cmd
+            return f"{self._build_name}.{self._out_format}:\n\t" + base_cmd + "\n"
         elif target == "script":
             return base_cmd
         else:

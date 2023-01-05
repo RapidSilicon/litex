@@ -12,6 +12,7 @@
 from migen import *
 from migen.genlib.cdc import AsyncResetSynchronizer, MultiReg
 
+from litex.build.generic_platform import *
 from litex.soc.interconnect import stream
 
 # JTAG TAP FSM -------------------------------------------------------------------------------------
@@ -237,40 +238,51 @@ class AlteraJTAG(Module):
 
     @staticmethod
     def get_primitive(device):
-        # TODO: Add support for all devices.
+        # TODO: Add support for Stratix 10, Arria 10 SoC and Agilex devices.
         prim_dict = {
             # Primitive Name                Ðevice (startswith)
-            "arriaii_jtag"                : [],
-            "arriaiigz_jtag"              : [],
-            "arriav_jtag"                 : [],
-            "arriavgz_jtag"               : [],
-            "cyclone_jtag"                : [],
+            "arriaii_jtag"                : ["ep2a"],
+            "arriaiigz_jtag"              : ["ep2agz"],
+            "arriav_jtag"                 : ["5a"],
+            "arriavgz_jtag"               : ["5agz"],
+            "cyclone_jtag"                : ["ep1c"],
             "cyclone10lp_jtag"            : ["10cl"],
-            "cycloneii_jtag"              : [],
-            "cycloneiii_jtag"             : [],
-            "cycloneiiils_jtag"           : [],
-            "cycloneiv_jtag"              : [],
-            "cycloneive_jtag"             : ["ep4c"],
+            "cycloneii_jtag"              : ["ep2c"],
+            "cycloneiii_jtag"             : ["ep3c"],
+            "cycloneiiils_jtag"           : ["ep3cls"],
+            "cycloneiv_jtag"              : ["ep4cgx"],
+            "cycloneive_jtag"             : ["ep4ce"],
             "cyclonev_jtag"               : ["5c"],
-            "fiftyfivenm_jtag"            : ["10m"],
-            "maxii_jtag"                  : [],
-            "maxv_jtag"                   : [],
-            "stratix_jtag"                : [],
-            "stratixgx_jtag"              : [],
-            "stratixii_jtag"              : [],
-            "stratixiigx_jtag"            : [],
-            "stratixiii_jtag"             : [],
-            "stratixiv_jtag"              : [],
-            "stratixv_jtag"               : [],
-            "twentynm_jtagblock"          : [],
-            "twentynm_jtag"               : [],
+            "fiftyfivenm_jtag"            : ["10m"], # MAX 10 series
+            "maxii_jtag"                  : ["epm1", "epm2", "epm5"],
+            "maxv_jtag"                   : ["5m"],
+            "stratix_jtag"                : ["ep1s"],
+            "stratixgx_jtag"              : ["ep1sgx"],
+            "stratixii_jtag"              : ["ep2s"],
+            "stratixiigx_jtag"            : ["ep2sgx"],
+            "stratixiii_jtag"             : ["ep3s"],
+            "stratixiv_jtag"              : ["ep4s"],
+            "stratixv_jtag"               : ["5s"],
+            "twentynm_jtagblock"          : [], # Arria 10 series
+            "twentynm_jtag"               : ["10a"],
             "twentynm_hps_interface_jtag" : [],
         }
+
+        matching_prims = {}
+
         for prim, prim_devs in prim_dict.items():
             for prim_dev in prim_devs:
                 if device.lower().startswith(prim_dev):
-                    return prim
-        return None
+                    matching_prims[prim_dev] = prim
+
+        # get the closest match
+        best_device = ""
+
+        for dev, prim in matching_prims.items():
+            if len(dev) > len(best_device):
+                best_device = dev
+
+        return matching_prims.get(best_device)
 
 # Xilinx JTAG --------------------------------------------------------------------------------------
 
@@ -491,3 +503,55 @@ class JTAGPHY(Module):
                 NextState("XFER-READY")
             )
         )
+
+# Efinix / TRION -----------------------------------------------------------------------------------
+
+class EfinixJTAG(Module):
+    # id refer to the JTAG_USER{id}
+    def __init__(self, platform, id=1):
+        self.name     = f"jtag_{id}"
+        self.platform = platform
+        self.id       = id
+
+        _io = [
+            (self.name, 0,
+                Subsignal("CAPTURE", Pins(1)),
+                Subsignal("DRCK",    Pins(1)),
+                Subsignal("RESET",   Pins(1)),
+                Subsignal("RUNTEST", Pins(1)),
+                Subsignal("SEL",     Pins(1)),
+                Subsignal("SHIFT",   Pins(1)),
+                Subsignal("TCK",     Pins(1)),
+                Subsignal("TDI",     Pins(1)),
+                Subsignal("TMS",     Pins(1)),
+                Subsignal("UPDATE",  Pins(1)),
+                Subsignal("TDO",     Pins(1)),
+            ),
+        ]
+        platform.add_extension(_io)
+
+        self.pins = pins = platform.request(self.name)
+        for pin in pins.flatten():
+            self.platform.toolchain.excluded_ios.append(pin.backtrace[-1][0])
+
+        block = {}
+        block["type"] = "JTAG"
+        block["name"] = self.name
+        block["id"]   = self.id
+        block["pins"] = pins
+        self.platform.toolchain.ifacewriter.blocks.append(block)
+
+    def bind_vexriscv_smp(self, cpu):
+        self.comb += [
+            # JTAG -> CPU.
+            cpu.jtag_clk.eq(     self.pins.TCK),
+            cpu.jtag_enable.eq(  self.pins.SEL),
+            cpu.jtag_capture.eq( self.pins.CAPTURE),
+            cpu.jtag_shift.eq(   self.pins.SHIFT),
+            cpu.jtag_update.eq(  self.pins.UPDATE),
+            cpu.jtag_reset.eq(   self.pins.RESET),
+            cpu.jtag_tdi.eq(     self.pins.TDI),
+
+            # CPU -> JTAG.
+            self.pins.TDO.eq(cpu.jtag_tdo),
+        ]
